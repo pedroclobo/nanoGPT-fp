@@ -1,3 +1,6 @@
+import argparse
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,6 +17,16 @@ EVAL_ITERS = 200
 LR = 3e-4
 TRAIN_FRAC = 0.9
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+
+# Hyperparams that define the architecture. Saved with every checkpoint so the
+# model can be rebuilt with matching shapes. On resume they must match the
+# current globals exactly.
+ARCH_KEYS = ("N_EMBD", "N_HEAD", "N_LAYER", "CONTEXT_SIZE", "DROPOUT")
+
+
+def get_config():
+    g = globals()
+    return {k: g[k] for k in ARCH_KEYS}
 
 text = open("input.txt", encoding="utf-8").read()
 chars = sorted(set(text))
@@ -148,19 +161,104 @@ class GPT(nn.Module):
         return idx
 
 
-def main():
-    model = GPT().to(DEVICE)
-    opt = torch.optim.AdamW(model.parameters(), lr=LR)
+def save_ckpt(model, opt, it, val):
+    os.makedirs("checkpoints", exist_ok=True)
+    path = f"checkpoints/L{N_LAYER}_E{N_EMBD}_H{N_HEAD}_C{CONTEXT_SIZE}.pt"
+    torch.save({
+        "config": get_config(),
+        "stoi": stoi,
+        "itos": itos,
+        "model": model.state_dict(),
+        "optimizer": opt.state_dict(),
+        "iter": it,
+        "val": val,
+        "rng_state": torch.get_rng_state(),
+    }, path)
+    return path
 
-    for it in range(MAX_ITERS):
+
+def load_states(ckpt, model, opt):
+    model.load_state_dict(ckpt["model"])
+    model.to(DEVICE)
+    opt.load_state_dict(ckpt["optimizer"])
+    for state in opt.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(DEVICE)
+    torch.set_rng_state(ckpt["rng_state"])
+    return ckpt["iter"]
+
+
+def generate_from(path):
+    ckpt = torch.load(path, map_location="cpu")
+    # The checkpoint's config is source of truth: rebuild at its saved shapes
+    # regardless of the current globals or flags.
+    for k, v in ckpt["config"].items():
+        globals()[k] = v
+    globals()["itos"] = ckpt["itos"]
+    globals()["vocab_size"] = len(ckpt["stoi"])
+    model = GPT().to(DEVICE)
+    model.load_state_dict(ckpt["model"])
+    model.eval()
+    start = torch.zeros((1, 1), dtype=torch.long, device=DEVICE)
+    print(decode(model.generate(start, 500)[0].tolist()))
+
+
+# Globals overridable from the CLI, as --lowercase flags (unset flags keep the default).
+TUNABLE = ARCH_KEYS + ("BATCH_SIZE", "LR", "MAX_ITERS")
+
+
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--resume", help="checkpoint to resume training from")
+    p.add_argument("--generate", help="checkpoint to sample from, then exit")
+    for name in TUNABLE:
+        p.add_argument(f"--{name.lower()}", type=type(globals()[name]))
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+    g = globals()
+    for name in TUNABLE:
+        val = getattr(args, name.lower())
+        if val is not None:
+            g[name] = val
+
+    if args.generate:
+        generate_from(args.generate)
+        return
+
+    if args.resume:
+        ckpt = torch.load(args.resume, map_location="cpu")
+        ignored = [n.lower() for n in ARCH_KEYS if getattr(args, n.lower()) is not None]
+        if ignored:
+            print(f"warning: --resume adopts the checkpoint's config, ignoring {ignored}")
+        for k, v in ckpt["config"].items():
+            g[k] = v
+        model = GPT().to(DEVICE)
+        opt = torch.optim.AdamW(model.parameters(), lr=LR)
+        start_iter = load_states(ckpt, model, opt)
+        print(f"resumed from {args.resume} at iter {start_iter}")
+    else:
+        model = GPT().to(DEVICE)
+        opt = torch.optim.AdamW(model.parameters(), lr=LR)
+        start_iter = 0
+
+    for it in range(start_iter, MAX_ITERS):
         if it % EVAL_INTERVAL == 0:
             losses = estimate_loss(model)
             print(f"iter {it:5d}  train {losses['train']:.4f}  val {losses['val']:.4f}")
+            save_ckpt(model, opt, it, losses['val'])
         xs, ys = get_batch("train")
         _, loss = model(xs, ys)
         opt.zero_grad()
         loss.backward()
         opt.step()
+
+    losses = estimate_loss(model)
+    print(f"iter {MAX_ITERS:5d}  train {losses['train']:.4f}  val {losses['val']:.4f}")
+    print(f"  saved -> {save_ckpt(model, opt, MAX_ITERS, losses['val'])}")
 
     model.eval()
     start = torch.zeros((1, 1), dtype=torch.long, device=DEVICE)
