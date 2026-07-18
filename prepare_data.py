@@ -5,8 +5,10 @@ Source: poems scraped from arquivopessoa.net, distributed as a single CSV by the
 USP Turing group (https://github.com/turing-usp/fernando-pessoa).
 """
 
+import argparse
 import csv
 import re
+import string
 import urllib.request
 from pathlib import Path
 
@@ -49,8 +51,8 @@ def is_portuguese(text):
 
 AUTHORS = {"Fernando Pessoa", "Alberto Caeiro", "Ricardo Reis", "Álvaro de Campos"}
 
-def keep_row(row):
-    return row["tipo"] == "poesia" and row["autor"] in AUTHORS and is_portuguese(row["texto"])
+def keep_row(row, types):
+    return row["tipo"] in types and row["autor"] in AUTHORS and is_portuguese(row["texto"])
 
 # editorial spans: [?], [a ver?], que[m]
 BRACKET_RE = re.compile(r"\[[^\]]*\]")
@@ -71,10 +73,20 @@ TRANS = {
 }
 
 
+# Whitelist of characters to keep (the curated Portuguese poetry set).
+ALLOWED = frozenset(
+    string.ascii_letters + string.digits + " \n"
+    + "!\"'(),-./:;?"
+    + "ª«º»"
+    + "ÀÁÂÃÇÉÊÍÓÕÚàáâãçéêíóôõú"
+)
+
+
 def clean(text):
     """Strip editorial cruft, keep original spelling."""
     text = BRACKET_RE.sub("", text)
     text = text.translate(TRANS)
+    text = "".join(c for c in text if c in ALLOWED)
     lines = [ln.rstrip() for ln in text.split("\n") if set(ln.strip()) != {"."}]
     text = "\n".join(lines)
     text = MULTISPACE_RE.sub(" ", text)
@@ -94,7 +106,13 @@ def dedup(texts):
 
 
 def main():
-    rows = [r for r in load_rows(CSV_PATH) if keep_row(r)]
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--type", choices=("poetry", "prose"), default="poetry",
+                    help="which text type to include (default: poetry)")
+    args = ap.parse_args()
+    types = {"poetry": {"poesia"}, "prose": {"prosa"}}[args.type]
+
+    rows = [r for r in load_rows(CSV_PATH) if keep_row(r, types)]
     texts = dedup([clean(r["texto"]) for r in rows])
     corpus = "\n\n".join(texts) + "\n"
     chars = set(corpus)
