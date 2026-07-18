@@ -14,6 +14,7 @@ DROPOUT = 0.1
 MAX_ITERS = 5000
 EVAL_INTERVAL = 500
 EVAL_ITERS = 200
+PATIENCE = 5  # early stop after this many evals without val improvement (0 disables)
 LR = 3e-4
 TRAIN_FRAC = 0.9
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -212,6 +213,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--resume", help="checkpoint to resume training from")
     p.add_argument("--generate", help="checkpoint to sample from, then exit")
+    p.add_argument("--patience", type=int)
     for name in TUNABLE:
         p.add_argument(f"--{name.lower()}", type=type(globals()[name]))
     return p.parse_args()
@@ -224,6 +226,8 @@ def main():
         val = getattr(args, name.lower())
         if val is not None:
             g[name] = val
+    if args.patience is not None:
+        g["PATIENCE"] = args.patience
 
     if args.generate:
         generate_from(args.generate)
@@ -245,20 +249,30 @@ def main():
         opt = torch.optim.AdamW(model.parameters(), lr=LR)
         start_iter = 0
 
+    best_val, stale, stopped = float("inf"), 0, False
     for it in range(start_iter, MAX_ITERS):
         if it % EVAL_INTERVAL == 0:
             losses = estimate_loss(model)
             print(f"iter {it:5d}  train {losses['train']:.4f}  val {losses['val']:.4f}")
             save_ckpt(model, opt, it, losses['val'])
+            if losses['val'] < best_val:
+                best_val, stale = losses['val'], 0
+            else:
+                stale += 1
+                if PATIENCE and stale >= PATIENCE:
+                    print(f"early stop at iter {it}: no val improvement for {PATIENCE} evals")
+                    stopped = True
+                    break
         xs, ys = get_batch("train")
         _, loss = model(xs, ys)
         opt.zero_grad()
         loss.backward()
         opt.step()
 
-    losses = estimate_loss(model)
-    print(f"iter {MAX_ITERS:5d}  train {losses['train']:.4f}  val {losses['val']:.4f}")
-    print(f"  saved -> {save_ckpt(model, opt, MAX_ITERS, losses['val'])}")
+    if not stopped:
+        losses = estimate_loss(model)
+        print(f"iter {MAX_ITERS:5d}  train {losses['train']:.4f}  val {losses['val']:.4f}")
+        print(f"  saved -> {save_ckpt(model, opt, MAX_ITERS, losses['val'])}")
 
     model.eval()
     start = torch.zeros((1, 1), dtype=torch.long, device=DEVICE)
