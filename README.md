@@ -13,7 +13,7 @@ It takes inspiration from Andrej Karpathy's [Let's build GPT](https://www.youtub
 |---|---|
 | [`bigram.py`](bigram.py) | 10.6K |
 | [`attention.py`](attention.py) | 31.8K |
-| [`blocks.py`](blocks.py) | 4.8M |
+| [`transformer.py`](transformer.py) | 4.8M |
 
 ### Bigram
 
@@ -38,13 +38,13 @@ Clearer patterns emerge, with more recognizable Portuguese words taking shape.
 
 ![attention sample](assets/attention.gif)
 
-### Blocks
+### Transformer
 
 Stacks $N$ transformer blocks, each pairing multi-head attention with a feed-forward MLP.
 Residual connections and pre-norm LayerNorm keep the deeper network trainable, and dropout regularizes it.
 This is the full transformer and the one behind the released checkpoints.
 
-![blocks sample](assets/blocks.gif)
+![transformer sample](assets/transformer.gif)
 
 Nearly every word is now recognizable Portuguese, laid out as verse.
 It reads like a poem, though it carries no real semantic meaning.
@@ -64,7 +64,7 @@ python prepare_data.py --type prose
 
 ## Results
 
-`blocks.py` (E256 / H8 / L6), best validation loss per corpus:
+`transformer.py` (E256 / H8 / L6), best validation loss per corpus:
 
 | Corpus | Number of Parameters | Context Size | Training Iterations | Validation Loss |
 |---|---|---|---|---|
@@ -86,13 +86,13 @@ The larger prose corpus overfits later, reaching a lower loss.
 python prepare_data.py --type poetry
 
 # Train, flags override the model's Config defaults
-python blocks.py --n_embd 256 --n_head 8 --n_layer 6 --context_size 128 --dropout 0.3
+python transformer.py --n_embd 256 --n_head 8 --n_layer 6 --context_size 128 --dropout 0.3
 
 # Resume, adopting the arch from the checkpoint and training flags from the CLI
-python blocks.py --resume checkpoints/blocks_CS128_NE256_NH8_NL6_D0.3.pt --max_iters 20000
+python transformer.py --resume checkpoints/transformer_CS128_NE256_NH8_NL6_D0.3.pt --max_iters 20000
 
 # Generate, streaming token by token with a live tok/s readout
-python blocks.py --generate checkpoints/poetry.pt --num_tokens 1000
+python transformer.py --generate checkpoints/poetry.pt --num_tokens 1000
 ```
 
 Training auto-saves a checkpoint to `checkpoints/<model>_<arch>.pt` each eval interval.
@@ -100,5 +100,5 @@ It early-stops when validation stops improving (check `--patience`).
 
 ## Checkpoints
 
-Pre-trained `blocks` weights are attached to the [v1.0 release](https://github.com/pedroclobo/nanoGPT-fp/releases/tag/v1.0): `poetry.pt` and `prose.pt`.
+Pre-trained `transformer` weights are attached to the [v1.0 release](https://github.com/pedroclobo/nanoGPT-fp/releases/tag/v1.0): `poetry.pt` and `prose.pt`.
 Download one and point `--generate` at it.

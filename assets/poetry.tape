@@ -7,6 +7,6 @@ Set Height 600
 Set Padding 20
 Set WaitTimeout 120s
 
-Type ".venv/bin/python blocks.py --generate ~/dev/checkpoints/poetry.pt --num_tokens 1000"
+Type ".venv/bin/python transformer.py --generate ~/dev/checkpoints/poetry.pt --num_tokens 1000"
 Enter
 Wait

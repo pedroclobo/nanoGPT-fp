@@ -9,7 +9,7 @@ from common import BaseConfig, run
 
 @dataclass
 class Config(BaseConfig):
-    name: str = "blocks"
+    name: str = "transformer"
     context_size: int = 32
     n_embd: int = 64
     n_head: int = 4
